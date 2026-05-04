@@ -63,6 +63,9 @@ export default async function GroupContactsQrViewerPage({ params }: Props) {
             {row.member_count} contacts
           </p>
 
+          <div className="mt-3">
+          </div>
+
           <div className="mt-8 flex flex-col items-center gap-6">
             <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200 shadow-sm">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -90,9 +93,6 @@ export default async function GroupContactsQrViewerPage({ params }: Props) {
 
           <div className="mt-10 border-t border-slate-200 pt-6">
             <GroupContactsQrFallback members={fallbackMembers} />
-          </div>
-
-          <div className="mt-8 border-t border-slate-200 pt-6">
           </div>
         </div>
 
