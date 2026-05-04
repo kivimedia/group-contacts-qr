@@ -91,6 +91,9 @@ export default async function GroupContactsQrViewerPage({ params }: Props) {
           <div className="mt-10 border-t border-slate-200 pt-6">
             <GroupContactsQrFallback members={fallbackMembers} />
           </div>
+
+          <div className="mt-8 border-t border-slate-200 pt-6">
+          </div>
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-500">

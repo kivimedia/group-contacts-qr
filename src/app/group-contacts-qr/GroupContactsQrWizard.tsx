@@ -35,13 +35,43 @@ type SlugStatus =
   | { state: 'taken'; reason: string }
   | { state: 'invalid'; reason: string };
 
+// Picks the most likely header row in the first ~10 rows of an upload.
+// Real-world rosters often start with banner rows ("DJ THINK TANK ROSTER",
+// "Updated as of May 9, 2022") before the actual column headers. We score
+// each candidate row by how many cells the fuzzy mapper can recognize as
+// known contact fields; ties go to the earliest row.
+function detectHeaderRowIdx(rawRows: string[][]): number {
+  const SCAN_DEPTH = Math.min(rawRows.length, 10);
+  let bestIdx = 0;
+  let bestScore = -1;
+  for (let i = 0; i < SCAN_DEPTH; i++) {
+    const candidate = (rawRows[i] ?? []).map((c) => c.trim()).filter(Boolean);
+    if (candidate.length < 2) continue;
+    const mapping = autoMapColumns(candidate);
+    const score = Object.keys(mapping).length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  // If nothing scored anything (file has no recognizable headers anywhere),
+  // fall back to the first row that has 2+ non-empty cells, else row 0.
+  if (bestScore <= 0) {
+    for (let i = 0; i < SCAN_DEPTH; i++) {
+      const populated = (rawRows[i] ?? []).filter((c) => c.trim()).length;
+      if (populated >= 2) return i;
+    }
+  }
+  return bestIdx;
+}
+
 export default function GroupContactsQrWizard() {
   const router = useRouter();
 
   const [file, setFile] = useState<File | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [headers, setHeaders] = useState<string[]>([]);
-  const [rows, setRows] = useState<ParsedRow[]>([]);
+  const [rawRows, setRawRows] = useState<string[][]>([]);
+  const [headerRowIdx, setHeaderRowIdx] = useState(0);
   const [mapping, setMapping] = useState<ColumnMapping>({});
 
   const [groupName, setGroupName] = useState('');
@@ -94,8 +124,8 @@ export default function GroupContactsQrWizard() {
   function handleFile(f: File) {
     setFile(f);
     setParseError(null);
-    setHeaders([]);
-    setRows([]);
+    setRawRows([]);
+    setHeaderRowIdx(0);
     setMapping({});
 
     const reader = new FileReader();
@@ -115,24 +145,50 @@ export default function GroupContactsQrWizard() {
         });
         if (rowsAoa.length === 0) throw new Error('Sheet is empty');
 
-        const headerRow = (rowsAoa[0] ?? []).map((h) => String(h ?? '').trim());
-        const dataRows = rowsAoa.slice(1).map((r) => {
-          const obj: ParsedRow = {};
-          headerRow.forEach((h, i) => {
-            obj[h] = String(r[i] ?? '').trim();
-          });
-          return obj;
-        });
+        const normalized: string[][] = rowsAoa.map((r) =>
+          (r ?? []).map((c) => String(c ?? '').trim())
+        );
+        const detectedIdx = detectHeaderRowIdx(normalized);
 
-        setHeaders(headerRow.filter(Boolean));
-        setRows(dataRows);
-        setMapping(autoMapColumns(headerRow.filter(Boolean)));
+        setRawRows(normalized);
+        setHeaderRowIdx(detectedIdx);
+        // Mapping recomputes via useEffect that watches headerRowIdx + rawRows.
       } catch (err) {
         setParseError(err instanceof Error ? err.message : String(err));
       }
     };
     reader.readAsArrayBuffer(f);
   }
+
+  // Re-derive headers + data rows whenever the user picks a different header
+  // row. Memoized so the contact preview doesn't recompute on every keystroke.
+  const headers = useMemo(
+    () => (rawRows[headerRowIdx] ?? []).map((c) => c.trim()).filter(Boolean),
+    [rawRows, headerRowIdx]
+  );
+  const rows: ParsedRow[] = useMemo(() => {
+    if (rawRows.length === 0) return [];
+    const headerRow = rawRows[headerRowIdx] ?? [];
+    return rawRows.slice(headerRowIdx + 1).map((r) => {
+      const obj: ParsedRow = {};
+      headerRow.forEach((h, i) => {
+        const key = String(h ?? '').trim();
+        if (!key) return;
+        obj[key] = String(r[i] ?? '').trim();
+      });
+      return obj;
+    });
+  }, [rawRows, headerRowIdx]);
+
+  // When the user manually changes the header row, re-run auto-mapping so the
+  // dropdowns update to match the new headers (they can still override).
+  useEffect(() => {
+    if (rawRows.length === 0) return;
+    setMapping(autoMapColumns(headers));
+    // Intentionally only on header row changes, not on every headers-array
+    // identity flip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headerRowIdx, rawRows]);
 
   const previewMembers: GenericContact[] = useMemo(() => {
     if (rows.length === 0) return [];
@@ -182,17 +238,27 @@ export default function GroupContactsQrWizard() {
           1. Upload the roster
         </h2>
         <p className="mt-1 text-sm text-slate-600">
-          CSV or Excel (.xlsx) file. The first row should be column headers.
+          CSV or Excel (.xlsx) file. We&apos;ll find your header row even if
+          there are banner rows above it.
         </p>
         <FileDrop file={file} onFile={handleFile} />
         {parseError && (
           <p className="mt-2 text-sm text-red-700">{parseError}</p>
         )}
-        {rows.length > 0 && (
-          <p className="mt-2 text-sm text-slate-600">
-            Loaded <strong>{rows.length}</strong> rows ·{' '}
-            <strong>{headers.length}</strong> columns
-          </p>
+        {rawRows.length > 0 && (
+          <>
+            <p className="mt-3 text-sm text-slate-600">
+              Loaded <strong>{rows.length}</strong> rows ·{' '}
+              <strong>{headers.length}</strong> columns. Header row is{' '}
+              <strong>row {headerRowIdx + 1}</strong>. Wrong? Click another
+              row.
+            </p>
+            <HeaderRowPicker
+              rawRows={rawRows}
+              selectedIdx={headerRowIdx}
+              onSelect={setHeaderRowIdx}
+            />
+          </>
         )}
       </section>
 
@@ -397,6 +463,61 @@ function FileDrop({
           Drop a CSV or Excel file here, or click to choose
         </p>
       )}
+    </div>
+  );
+}
+
+function HeaderRowPicker({
+  rawRows,
+  selectedIdx,
+  onSelect,
+}: {
+  rawRows: string[][];
+  selectedIdx: number;
+  onSelect: (idx: number) => void;
+}) {
+  const PEEK = Math.min(rawRows.length, 6);
+  const peekRows = rawRows.slice(0, PEEK);
+
+  return (
+    <div className="mt-3 overflow-x-auto rounded-lg ring-1 ring-slate-200">
+      <table className="min-w-full text-xs">
+        <tbody>
+          {peekRows.map((row, idx) => {
+            const isSelected = idx === selectedIdx;
+            const cells = row.slice(0, 6);
+            const more = row.length - cells.length;
+            return (
+              <tr
+                key={idx}
+                onClick={() => onSelect(idx)}
+                className={`cursor-pointer border-b border-slate-100 last:border-b-0 transition ${
+                  isSelected
+                    ? 'bg-emerald-50 font-medium text-emerald-900'
+                    : 'bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <td className="px-2 py-1.5 text-slate-400">
+                  {isSelected ? '▸' : ''}
+                  {idx + 1}
+                </td>
+                {cells.map((c, i) => (
+                  <td
+                    key={i}
+                    className="max-w-[180px] truncate px-2 py-1.5"
+                    title={c}
+                  >
+                    {c || <span className="text-slate-300">·</span>}
+                  </td>
+                ))}
+                {more > 0 && (
+                  <td className="px-2 py-1.5 text-slate-400">+{more} more</td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
