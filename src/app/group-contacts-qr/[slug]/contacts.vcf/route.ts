@@ -19,7 +19,7 @@ export async function GET(_request: Request, { params }: Props) {
       status: 200,
       headers: {
         'Content-Type': 'text/vcard; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${row.slug}-contacts.vcf"`,
+        'Content-Disposition': `inline; filename="${row.slug}-contacts.vcf"`,
         'Cache-Control': 'public, max-age=300, s-maxage=300',
         'X-Group-Contact-Count': String(row.member_count),
       },
