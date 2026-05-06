@@ -40,6 +40,11 @@ export type GroupContactPageRow = {
   member_count: number;
   view_count: number;
   created_at: string;
+  carddav_username: string | null;
+  carddav_password: string | null;
+  carddav_provisioned_at: string | null;
+  carddav_last_sync_at: string | null;
+  carddav_card_count: number | null;
 };
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/;

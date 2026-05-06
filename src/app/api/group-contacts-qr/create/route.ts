@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service-client';
 import { validateSlug } from '@/lib/group-contacts-qr/slug';
+import { fetchGroupContactPage } from '@/lib/group-contacts-qr/fetch-page';
+import { syncGroupToCardDav } from '@/lib/group-contacts-qr/carddav-provision';
 import {
   CONTACT_FIELDS,
   MAX_MEMBERS_PER_PAGE,
@@ -126,5 +128,31 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ slug: data.slug, memberCount: members.length });
+  // If a CardDAV server is configured, eagerly provision the slug's
+  // addressbook + initial sync so the first iPhone scan of the QR returns
+  // the signed profile instantly. Vercel serverless drops fire-and-forget
+  // work after the response, so we await. ~1-3s extra latency on submit
+  // (user is in a loading spinner anyway) in exchange for the QR being
+  // instantly scannable. If CARDDAV_BASE_URL is unset (Android-only mode)
+  // this whole block is skipped.
+  let provisionStatus: 'ok' | 'failed' | 'skipped' = 'skipped';
+  let provisionDetail: string | undefined;
+  if (process.env.CARDDAV_BASE_URL) {
+    try {
+      const row = await fetchGroupContactPage(slug);
+      if (row) await syncGroupToCardDav(row);
+      provisionStatus = 'ok';
+    } catch (err) {
+      provisionStatus = 'failed';
+      provisionDetail = err instanceof Error ? err.message : String(err);
+      console.error('[gcqr/create] eager provision failed (lazy will retry):', err);
+    }
+  }
+
+  return NextResponse.json({
+    slug: data.slug,
+    memberCount: members.length,
+    provisionStatus,
+    ...(provisionDetail ? { provisionDetail } : {}),
+  });
 }

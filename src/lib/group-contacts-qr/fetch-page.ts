@@ -7,7 +7,9 @@ export async function fetchGroupContactPage(
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from('group_contact_qr_pages')
-    .select('id, slug, name, members, member_count, view_count, created_at')
+    .select(
+      'id, slug, name, members, member_count, view_count, created_at, carddav_username, carddav_password, carddav_provisioned_at, carddav_last_sync_at, carddav_card_count'
+    )
     .eq('slug', slug)
     .maybeSingle();
   if (error) throw new Error(`fetchGroupContactPage: ${error.message}`);
@@ -20,6 +22,11 @@ export async function fetchGroupContactPage(
     member_count: data.member_count as number,
     view_count: data.view_count as number,
     created_at: data.created_at as string,
+    carddav_username: (data.carddav_username ?? null) as string | null,
+    carddav_password: (data.carddav_password ?? null) as string | null,
+    carddav_provisioned_at: (data.carddav_provisioned_at ?? null) as string | null,
+    carddav_last_sync_at: (data.carddav_last_sync_at ?? null) as string | null,
+    carddav_card_count: (data.carddav_card_count ?? null) as number | null,
   };
 }
 
